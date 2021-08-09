@@ -62,8 +62,6 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define Temp_in_analog_Pin GPIO_PIN_0
 #define Temp_in_analog_GPIO_Port GPIOA
-#define Temp_in_IC_Pin GPIO_PIN_1
-#define Temp_in_IC_GPIO_Port GPIOA
 #define Throttle_in_analog_Pin GPIO_PIN_4
 #define Throttle_in_analog_GPIO_Port GPIOA
 #define Temp_out_Pin GPIO_PIN_5

@@ -46,7 +46,10 @@
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc2;
 
+COMP_HandleTypeDef hcomp1;
+
 DAC_HandleTypeDef hdac1;
+DAC_HandleTypeDef hdac3;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
@@ -58,7 +61,7 @@ uint32_t ICSpeedVal1 = 0;
 uint32_t ICSpeedVal2 = 0;
 uint32_t ICSpeedDiff = 0;
 uint8_t ICSpeedIsFirstCapt = 0;
-uint8_t counter = 0;
+uint16_t counter = 0;
 
 
 ADC_ChannelConfTypeDef ADC2ChannelConfig = {0};
@@ -76,6 +79,8 @@ static void MX_TIM2_Init(void);
 static void MX_TIM3_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM4_Init(void);
+static void MX_COMP1_Init(void);
+static void MX_DAC3_Init(void);
 /* USER CODE BEGIN PFP */
 void toogle_ADC_Channel(ADC_ChannelConfTypeDef*);
 
@@ -92,7 +97,7 @@ int32_t NormalizeChannel(uint16_t ChannelValue, int32_t InMin, int32_t InMax, in
 
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
   {
-	if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2)
+	if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2)	//Input capture source is from COMP1 with a 1/4*VREF threshold
 	{
 		if (!ICSpeedIsFirstCapt)
 		{
@@ -102,19 +107,22 @@ void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
 		else
 		{
 			ICSpeedVal2 = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2);
-			if (ICSpeedVal1 < ICSpeedVal2) // Overflowed ?
+			if ( counter !=0)
 			{
-				ICSpeedDiff += ICSpeedVal2-ICSpeedVal1;
-			}
-			else
-			{
-				ICSpeedDiff += ((32000000-ICSpeedVal1)+ICSpeedVal2)+1;
+				if (ICSpeedVal1 < ICSpeedVal2) // Overflowed ?
+				{
+					ICSpeedDiff += ICSpeedVal2-ICSpeedVal1;
+				}
+				else
+				{
+					ICSpeedDiff += ((32000000-ICSpeedVal1)+ICSpeedVal2)+1;
+				}
 			}
 			ICSpeedVal1 = ICSpeedVal2;
 			counter++;
-			if (counter>=100)
+			if (counter>=50)
 			{
-				ICSpeedDiff /= counter;
+				ICSpeedDiff /= counter-1;
 				counter = 0;
 				ICSpeedDiff = 0;
 			}
@@ -245,11 +253,13 @@ int main(void)
   MX_TIM3_Init();
   MX_TIM1_Init();
   MX_TIM4_Init();
+  MX_COMP1_Init();
+  MX_DAC3_Init();
   /* USER CODE BEGIN 2 */
 
   init_ADC_Channel(&ADC2ChannelConfig);
 
-
+  HAL_COMP_Start(&hcomp1);
   HAL_TIM_Base_Start(&htim2);
   HAL_TIM_IC_Start_IT(&htim2, TIM_CHANNEL_2);
 
@@ -380,6 +390,38 @@ static void MX_ADC2_Init(void)
 }
 
 /**
+  * @brief COMP1 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_COMP1_Init(void)
+{
+
+  /* USER CODE BEGIN COMP1_Init 0 */
+
+  /* USER CODE END COMP1_Init 0 */
+
+  /* USER CODE BEGIN COMP1_Init 1 */
+
+  /* USER CODE END COMP1_Init 1 */
+  hcomp1.Instance = COMP1;
+  hcomp1.Init.InputPlus = COMP_INPUT_PLUS_IO1;
+  hcomp1.Init.InputMinus = COMP_INPUT_MINUS_1_4VREFINT;
+  hcomp1.Init.OutputPol = COMP_OUTPUTPOL_NONINVERTED;
+  hcomp1.Init.Hysteresis = COMP_HYSTERESIS_50MV;
+  hcomp1.Init.BlankingSrce = COMP_BLANKINGSRC_NONE;
+  hcomp1.Init.TriggerMode = COMP_TRIGGERMODE_NONE;
+  if (HAL_COMP_Init(&hcomp1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN COMP1_Init 2 */
+
+  /* USER CODE END COMP1_Init 2 */
+
+}
+
+/**
   * @brief DAC1 Initialization Function
   * @param None
   * @retval None
@@ -421,6 +463,51 @@ static void MX_DAC1_Init(void)
   /* USER CODE BEGIN DAC1_Init 2 */
 
   /* USER CODE END DAC1_Init 2 */
+
+}
+
+/**
+  * @brief DAC3 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_DAC3_Init(void)
+{
+
+  /* USER CODE BEGIN DAC3_Init 0 */
+
+  /* USER CODE END DAC3_Init 0 */
+
+  DAC_ChannelConfTypeDef sConfig = {0};
+
+  /* USER CODE BEGIN DAC3_Init 1 */
+
+  /* USER CODE END DAC3_Init 1 */
+  /** DAC Initialization
+  */
+  hdac3.Instance = DAC3;
+  if (HAL_DAC_Init(&hdac3) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /** DAC channel OUT1 config
+  */
+  sConfig.DAC_HighFrequency = DAC_HIGH_FREQUENCY_INTERFACE_MODE_AUTOMATIC;
+  sConfig.DAC_DMADoubleDataMode = DISABLE;
+  sConfig.DAC_SignedFormat = DISABLE;
+  sConfig.DAC_SampleAndHold = DAC_SAMPLEANDHOLD_DISABLE;
+  sConfig.DAC_Trigger = DAC_TRIGGER_NONE;
+  sConfig.DAC_Trigger2 = DAC_TRIGGER_NONE;
+  sConfig.DAC_OutputBuffer = DAC_OUTPUTBUFFER_DISABLE;
+  sConfig.DAC_ConnectOnChipPeripheral = DAC_CHIPCONNECT_INTERNAL;
+  sConfig.DAC_UserTrimming = DAC_TRIMMING_FACTORY;
+  if (HAL_DAC_ConfigChannel(&hdac3, &sConfig, DAC_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN DAC3_Init 2 */
+
+  /* USER CODE END DAC3_Init 2 */
 
 }
 
@@ -553,8 +640,12 @@ static void MX_TIM2_Init(void)
   sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
   sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
   sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
-  sConfigIC.ICFilter = 0;
+  sConfigIC.ICFilter = 4;
   if (HAL_TIM_IC_ConfigChannel(&htim2, &sConfigIC, TIM_CHANNEL_2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIMEx_TISelection(&htim2, TIM_TIM2_TI2_COMP1, TIM_CHANNEL_2) != HAL_OK)
   {
     Error_Handler();
   }

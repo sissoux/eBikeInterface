@@ -55,6 +55,7 @@ TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
+TIM_HandleTypeDef htim6;
 
 /* USER CODE BEGIN PV */
 uint32_t ICSpeedVal1 = 0;
@@ -68,6 +69,8 @@ ADC_ChannelConfTypeDef ADC2ChannelConfig = {0};
 uint16_t MinAnalogThrottleValue = 0;
 uint16_t MaxAnalogThrottleValue = 4096;
 uint8_t ThrottleStartup = 1;	//Used to check the first value for throttle
+uint8_t OutputActive = 0;
+uint16_t AnalogThrottleValue = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -81,136 +84,15 @@ static void MX_TIM1_Init(void);
 static void MX_TIM4_Init(void);
 static void MX_COMP1_Init(void);
 static void MX_DAC3_Init(void);
+static void MX_TIM6_Init(void);
 /* USER CODE BEGIN PFP */
 void toogle_ADC_Channel(ADC_ChannelConfTypeDef*);
+int32_t NormalizeChannel(uint16_t ChannelValue, int32_t InMin, int32_t InMax, int32_t OutMin, int32_t OutMax);
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim);
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc);
+void init_ADC_Channel(ADC_ChannelConfTypeDef* ADCChannel);
+uint8_t refreshPPM(uint16_t value);
 
-
-int32_t NormalizeChannel(uint16_t ChannelValue, int32_t InMin, int32_t InMax, int32_t OutMin, int32_t OutMax)
-{
-	if ( ChannelValue <= InMin) return OutMin;
-	if ( ChannelValue >= InMax) return OutMax;
-
-	float ScaleA = ((float)(OutMax - OutMin))/(float)(InMax - InMin);
-	float ScaleB = (float)OutMin-((float)InMin * ScaleA);
-	return (int32_t)(ChannelValue * ScaleA + ScaleB);
-}
-
-void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
-  {
-	if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2)	//Input capture source is from COMP1 with a 1/4*VREF threshold
-	{
-		if (!ICSpeedIsFirstCapt)
-		{
-			ICSpeedVal1 = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2);
-			ICSpeedIsFirstCapt = 1;
-		}
-		else
-		{
-			ICSpeedVal2 = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2);
-			if ( counter !=0)
-			{
-				if (ICSpeedVal1 < ICSpeedVal2) // Overflowed ?
-				{
-					ICSpeedDiff += ICSpeedVal2-ICSpeedVal1;
-				}
-				else
-				{
-					ICSpeedDiff += ((32000000-ICSpeedVal1)+ICSpeedVal2)+1;
-				}
-			}
-			ICSpeedVal1 = ICSpeedVal2;
-			counter++;
-			if (counter>=50)
-			{
-				ICSpeedDiff /= counter-1;
-				counter = 0;
-				ICSpeedDiff = 0;
-			}
-		}
-
-	}
-  }
-
-void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
-{
-	if (hadc == &hadc2)	//Do a lot of things inside the interruption because it's trigged by Timer 4 not so often (few ms)
-	{
-		uint16_t value = HAL_ADC_GetValue(hadc);
-		switch(ADC2ChannelConfig.Channel)
-		{
-		case ADC_CHANNEL_1:	//Channel 1 is mixed temperature/speed reading. Concentrate on the high level and ignore signal when it is low. We can concentrate on
-			if (value>=MIN_TEMP_ANALOG_THERSHOLD)
-			{
-				HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, value);
-			}
-			break;
-
-		case ADC_CHANNEL_17:	//Channel 17 is throttle input. Just copy its value after PPM conversion
-			if (ThrottleStartup!=0)
-			{
-				if (value > 2048 && ThrottleStartup == 1)	//Throttle is maintained high during startup ==> Start calibration sequence
-				{
-					ThrottleStartup = 2;
-					MaxAnalogThrottleValue = value;
-				}
-				else if (value > 2048 && ThrottleStartup == 2 && value>MaxAnalogThrottleValue)	//Capture max value while throttle is higher than 2048
-				{
-					MaxAnalogThrottleValue = value;
-				}
-				else if (value <= 2048 && ThrottleStartup == 2)	//When throttle has gone below mid value launch min calibration step
-				{
-					ThrottleStartup = 3;
-					MinAnalogThrottleValue = value;
-				}
-				else if (value <= 2048 && ThrottleStartup == 3 && value<MinAnalogThrottleValue)	//capture min value while throttle is kept below 2048
-				{
-					MinAnalogThrottleValue = value;
-				}
-				else if (value > 2048 && ThrottleStartup == 3) 	//Exit calibration procedure when throttle is back above mid value
-				{
-					ThrottleStartup = 0;
-					//Add step to store new calibrated values to EEPROM
-				}
-			}
-			else
-			{
-				htim1.Instance->CCR1 = (uint16_t)NormalizeChannel(value, MinAnalogThrottleValue, MaxAnalogThrottleValue, MIN_CHANNEL_VALUE, MAX_CHANNEL_VALUE);
-			}
-			break;
-
-		default:
-			Error_Handler();
-			break;
-		}
-		HAL_ADC_Stop_IT(&hadc2);	//Stop ADC Because we are going to change channel
-		toogle_ADC_Channel(&ADC2ChannelConfig);	//Switch adc channel for next conversion
-		HAL_ADC_Start_IT(&hadc2);	//Restart ADC Waiting for next conversion (after Timer 4 Trigger)
-	}
-}
-
-void init_ADC_Channel(ADC_ChannelConfTypeDef* ADCChannel)
-{
-	ADCChannel->Channel = ADC_CHANNEL_1;
-	ADCChannel->Rank = ADC_REGULAR_RANK_1;
-	ADCChannel->SamplingTime = ADC_SAMPLETIME_12CYCLES_5;
-	ADCChannel->SingleDiff = ADC_SINGLE_ENDED;
-	ADCChannel->OffsetNumber = ADC_OFFSET_NONE;
-	ADCChannel->Offset = 0;
-	if (HAL_ADC_ConfigChannel(&hadc2, ADCChannel) != HAL_OK)
-		{
-			Error_Handler();
-		}
-}
-
-void toogle_ADC_Channel(ADC_ChannelConfTypeDef* ADCChannel)
-{
-	if ( ADCChannel->Channel == ADC_CHANNEL_1) ADCChannel->Channel = ADC_CHANNEL_17;
-	else ADCChannel->Channel = ADC_CHANNEL_1;
-	if (HAL_ADC_ConfigChannel(&hadc2, ADCChannel) != HAL_OK)
-	{
-		Error_Handler();
-	}
-}
 
 /* USER CODE END PFP */
 
@@ -255,6 +137,7 @@ int main(void)
   MX_TIM4_Init();
   MX_COMP1_Init();
   MX_DAC3_Init();
+  MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
 
   init_ADC_Channel(&ADC2ChannelConfig);
@@ -278,6 +161,7 @@ int main(void)
   while (1)
   {
 
+	  refreshPPM(AnalogThrottleValue);
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -749,6 +633,44 @@ static void MX_TIM4_Init(void)
 }
 
 /**
+  * @brief TIM6 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM6_Init(void)
+{
+
+  /* USER CODE BEGIN TIM6_Init 0 */
+
+  /* USER CODE END TIM6_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM6_Init 1 */
+
+  /* USER CODE END TIM6_Init 1 */
+  htim6.Instance = TIM6;
+  htim6.Init.Prescaler = 16;
+  htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim6.Init.Period = 1000;
+  htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim6, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM6_Init 2 */
+
+  /* USER CODE END TIM6_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -774,6 +696,145 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN 4 */
 
+int32_t NormalizeChannel(uint16_t ChannelValue, int32_t InMin, int32_t InMax, int32_t OutMin, int32_t OutMax)
+{
+	if ( ChannelValue <= InMin) return OutMin;
+	if ( ChannelValue >= InMax) return OutMax;
+
+	float ScaleA = ((float)(OutMax - OutMin))/(float)(InMax - InMin);
+	float ScaleB = (float)OutMin-((float)InMin * ScaleA);
+	return (int32_t)(ChannelValue * ScaleA + ScaleB);
+}
+
+void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
+  {
+	if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2)	//Input capture source is from COMP1 with a 1/4*VREF threshold
+	{
+		if (!ICSpeedIsFirstCapt)
+		{
+			ICSpeedVal1 = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2);
+			ICSpeedIsFirstCapt = 1;
+		}
+		else
+		{
+			ICSpeedVal2 = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2);
+			if ( counter !=0)
+			{
+				if (ICSpeedVal1 < ICSpeedVal2) // Overflowed ?
+				{
+					ICSpeedDiff += ICSpeedVal2-ICSpeedVal1;
+				}
+				else
+				{
+					ICSpeedDiff += ((32000000-ICSpeedVal1)+ICSpeedVal2)+1;
+				}
+			}
+			ICSpeedVal1 = ICSpeedVal2;
+			counter++;
+			if (counter>=50)
+			{
+				ICSpeedDiff /= counter-1;
+				counter = 0;
+				ICSpeedDiff = 0;
+			}
+		}
+
+	}
+  }
+
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
+{
+	if (hadc == &hadc2)	//Do a lot of things inside the interruption because it's trigged by Timer 4 not so often (few ms)
+	{
+		uint16_t value = HAL_ADC_GetValue(hadc);
+		switch(ADC2ChannelConfig.Channel)
+		{
+		case ADC_CHANNEL_1:	//Channel 1 is mixed temperature/speed reading. Concentrate on the high level and ignore signal when it is low. We can concentrate on
+			if (value>=MIN_TEMP_ANALOG_THERSHOLD)
+			{
+				HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, value);
+			}
+			break;
+
+		case ADC_CHANNEL_17:	//Channel 17 is throttle input. Just copy its value after PPM conversion
+			if (ThrottleStartup!=0)
+			{
+				if (value > 2048 && ThrottleStartup == 1)	//Throttle is maintained high during startup ==> Start calibration sequence
+				{
+					ThrottleStartup = 2;
+					MaxAnalogThrottleValue = value;
+				}
+				else if (value > 2048 && ThrottleStartup == 2 && value>MaxAnalogThrottleValue)	//Capture max value while throttle is higher than 2048
+				{
+					MaxAnalogThrottleValue = value;
+				}
+				else if (value <= 2048 && ThrottleStartup == 2)	//When throttle has gone below mid value launch min calibration step
+				{
+					ThrottleStartup = 3;
+					MinAnalogThrottleValue = value;
+				}
+				else if (value <= 2048 && ThrottleStartup == 3 && value<MinAnalogThrottleValue)	//capture min value while throttle is kept below 2048
+				{
+					MinAnalogThrottleValue = value;
+				}
+				else if (value > 2048 && ThrottleStartup == 3) 	//Exit calibration procedure when throttle is back above mid value
+				{
+					ThrottleStartup = 0;
+					//Add step to store new calibrated values to EEPROM
+				}
+			}
+			else
+			{
+				ThrottleStartup = 0;
+				AnalogThrottleValue = value;
+			}
+			break;
+
+		default:
+			Error_Handler();
+			break;
+		}
+		HAL_ADC_Stop_IT(&hadc2);	//Stop ADC Because we are going to change channel
+		toogle_ADC_Channel(&ADC2ChannelConfig);	//Switch adc channel for next conversion
+		HAL_ADC_Start_IT(&hadc2);	//Restart ADC Waiting for next conversion (after Timer 4 Trigger)
+	}
+}
+
+void init_ADC_Channel(ADC_ChannelConfTypeDef* ADCChannel)
+{
+	ADCChannel->Channel = ADC_CHANNEL_1;
+	ADCChannel->Rank = ADC_REGULAR_RANK_1;
+	ADCChannel->SamplingTime = ADC_SAMPLETIME_12CYCLES_5;
+	ADCChannel->SingleDiff = ADC_SINGLE_ENDED;
+	ADCChannel->OffsetNumber = ADC_OFFSET_NONE;
+	ADCChannel->Offset = 0;
+	if (HAL_ADC_ConfigChannel(&hadc2, ADCChannel) != HAL_OK)
+		{
+			Error_Handler();
+		}
+}
+
+void toogle_ADC_Channel(ADC_ChannelConfTypeDef* ADCChannel)
+{
+	if ( ADCChannel->Channel == ADC_CHANNEL_1) ADCChannel->Channel = ADC_CHANNEL_17;
+	else ADCChannel->Channel = ADC_CHANNEL_1;
+	if (HAL_ADC_ConfigChannel(&hadc2, ADCChannel) != HAL_OK)
+	{
+		Error_Handler();
+	}
+}
+
+uint8_t refreshPPM(uint16_t value)
+{
+
+	if (OutputActive ==1 )
+	{
+		htim1.Instance->CCR1 = (uint16_t)NormalizeChannel(value, MinAnalogThrottleValue, MaxAnalogThrottleValue, MIN_CHANNEL_VALUE, MAX_CHANNEL_VALUE);
+		return 1;
+	}
+	else htim1.Instance->CCR1 = 500;
+	return 0;
+}
 /* USER CODE END 4 */
 
 /**

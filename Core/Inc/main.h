@@ -66,8 +66,6 @@ void Error_Handler(void);
 #define Throttle_in_analog_GPIO_Port GPIOA
 #define Temp_out_Pin GPIO_PIN_5
 #define Temp_out_GPIO_Port GPIOA
-#define PAS_in_IC_Pin GPIO_PIN_6
-#define PAS_in_IC_GPIO_Port GPIOA
 #define Status_LED_Pin GPIO_PIN_15
 #define Status_LED_GPIO_Port GPIOA
 /* USER CODE BEGIN Private defines */

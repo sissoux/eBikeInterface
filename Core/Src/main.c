@@ -35,7 +35,8 @@
 #define MIN_CHANNEL_VALUE 500
 #define MAX_CHANNEL_VALUE 2500
 #define MIN_TEMP_ANALOG_THERSHOLD 200
-#define PAS_ACTIVE_THRESHOLD 1000
+#define PAS_ACTIVE_THRESHOLD 20000
+#define THROTTLE_THRESHOLD 100
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -53,9 +54,9 @@ DAC_HandleTypeDef hdac3;
 
 TIM_HandleTypeDef htim1;
 TIM_HandleTypeDef htim2;
-TIM_HandleTypeDef htim3;
 TIM_HandleTypeDef htim4;
 TIM_HandleTypeDef htim6;
+TIM_HandleTypeDef htim15;
 
 /* USER CODE BEGIN PV */
 uint32_t ICSpeedVal1 = 0;
@@ -64,13 +65,20 @@ uint32_t ICSpeedDiff = 0;
 uint8_t ICSpeedIsFirstCapt = 0;
 uint16_t counter = 0;
 
+uint8_t PAS_Detected = 0;
+uint32_t PASSpeedVal1 = 0;
+uint32_t PASSpeedVal2 = 0;
+uint32_t PASSpeedDiff = 0;
+uint8_t PASGotCapture = 1;
+
 
 ADC_ChannelConfTypeDef ADC2ChannelConfig = {0};
 uint16_t MinAnalogThrottleValue = 0;
 uint16_t MaxAnalogThrottleValue = 4096;
 uint8_t ThrottleStartup = 1;	//Used to check the first value for throttle
-uint8_t OutputActive = 0;
+uint8_t OutputActive = 1;
 uint16_t AnalogThrottleValue = 0;
+uint8_t AssistLevel = 1;	//1 to 4 value
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -79,12 +87,12 @@ static void MX_GPIO_Init(void);
 static void MX_ADC2_Init(void);
 static void MX_DAC1_Init(void);
 static void MX_TIM2_Init(void);
-static void MX_TIM3_Init(void);
 static void MX_TIM1_Init(void);
 static void MX_TIM4_Init(void);
 static void MX_COMP1_Init(void);
 static void MX_DAC3_Init(void);
 static void MX_TIM6_Init(void);
+static void MX_TIM15_Init(void);
 /* USER CODE BEGIN PFP */
 void toogle_ADC_Channel(ADC_ChannelConfTypeDef*);
 int32_t NormalizeChannel(uint16_t ChannelValue, int32_t InMin, int32_t InMax, int32_t OutMin, int32_t OutMax);
@@ -93,7 +101,22 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc);
 void init_ADC_Channel(ADC_ChannelConfTypeDef* ADCChannel);
 uint8_t refreshPPM(uint16_t value);
 
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+	if (htim == &htim6)
+	{
+		refreshPPM(AnalogThrottleValue);
+	}
+	else if (htim == &htim15)
+	{
+		if (PASGotCapture == 0)	//Check if capture has been detected. If not stop PAS, if detected then reset it until next timeout check.
+		{
+			PAS_Detected = 0;
+		}
+		else if (PASGotCapture!=2) PASGotCapture = 0;
 
+	}
+}
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -132,12 +155,12 @@ int main(void)
   MX_ADC2_Init();
   MX_DAC1_Init();
   MX_TIM2_Init();
-  MX_TIM3_Init();
   MX_TIM1_Init();
   MX_TIM4_Init();
   MX_COMP1_Init();
   MX_DAC3_Init();
   MX_TIM6_Init();
+  MX_TIM15_Init();
   /* USER CODE BEGIN 2 */
 
   init_ADC_Channel(&ADC2ChannelConfig);
@@ -145,6 +168,9 @@ int main(void)
   HAL_COMP_Start(&hcomp1);
   HAL_TIM_Base_Start(&htim2);
   HAL_TIM_IC_Start_IT(&htim2, TIM_CHANNEL_2);
+
+  HAL_TIM_Base_Start_IT(&htim15);
+  HAL_TIM_IC_Start_IT(&htim15, TIM_CHANNEL_1);
 
   htim1.Instance->CCR1 = 0;
   HAL_TIM_Base_Start(&htim1);
@@ -154,6 +180,8 @@ int main(void)
   HAL_DAC_Start(&hdac1, DAC_CHANNEL_2);
   HAL_TIM_Base_Start(&htim4);
 
+  HAL_TIM_Base_Start_IT(&htim6);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -161,7 +189,7 @@ int main(void)
   while (1)
   {
 
-	  refreshPPM(AnalogThrottleValue);
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -540,54 +568,6 @@ static void MX_TIM2_Init(void)
 }
 
 /**
-  * @brief TIM3 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_TIM3_Init(void)
-{
-
-  /* USER CODE BEGIN TIM3_Init 0 */
-
-  /* USER CODE END TIM3_Init 0 */
-
-  TIM_MasterConfigTypeDef sMasterConfig = {0};
-  TIM_IC_InitTypeDef sConfigIC = {0};
-
-  /* USER CODE BEGIN TIM3_Init 1 */
-
-  /* USER CODE END TIM3_Init 1 */
-  htim3.Instance = TIM3;
-  htim3.Init.Prescaler = 0;
-  htim3.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim3.Init.Period = 65535;
-  htim3.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
-  htim3.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
-  if (HAL_TIM_IC_Init(&htim3) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
-  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
-  if (HAL_TIMEx_MasterConfigSynchronization(&htim3, &sMasterConfig) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
-  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
-  sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
-  sConfigIC.ICFilter = 0;
-  if (HAL_TIM_IC_ConfigChannel(&htim3, &sConfigIC, TIM_CHANNEL_1) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN TIM3_Init 2 */
-
-  /* USER CODE END TIM3_Init 2 */
-
-}
-
-/**
   * @brief TIM4 Initialization Function
   * @param None
   * @retval None
@@ -671,6 +651,55 @@ static void MX_TIM6_Init(void)
 }
 
 /**
+  * @brief TIM15 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM15_Init(void)
+{
+
+  /* USER CODE BEGIN TIM15_Init 0 */
+
+  /* USER CODE END TIM15_Init 0 */
+
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_IC_InitTypeDef sConfigIC = {0};
+
+  /* USER CODE BEGIN TIM15_Init 1 */
+
+  /* USER CODE END TIM15_Init 1 */
+  htim15.Instance = TIM15;
+  htim15.Init.Prescaler = 159;
+  htim15.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim15.Init.Period = 30000;
+  htim15.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim15.Init.RepetitionCounter = 0;
+  htim15.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
+  if (HAL_TIM_IC_Init(&htim15) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim15, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigIC.ICPolarity = TIM_INPUTCHANNELPOLARITY_RISING;
+  sConfigIC.ICSelection = TIM_ICSELECTION_DIRECTTI;
+  sConfigIC.ICPrescaler = TIM_ICPSC_DIV1;
+  sConfigIC.ICFilter = 4;
+  if (HAL_TIM_IC_ConfigChannel(&htim15, &sConfigIC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM15_Init 2 */
+
+  /* USER CODE END TIM15_Init 2 */
+
+}
+
+/**
   * @brief GPIO Initialization Function
   * @param None
   * @retval None
@@ -708,38 +737,60 @@ int32_t NormalizeChannel(uint16_t ChannelValue, int32_t InMin, int32_t InMax, in
 
 void HAL_TIM_IC_CaptureCallback(TIM_HandleTypeDef *htim)
   {
-	if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2)	//Input capture source is from COMP1 with a 1/4*VREF threshold
+	if (htim == &htim2)
 	{
-		if (!ICSpeedIsFirstCapt)
+		if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_2)	//Input capture source is from COMP1 with a 1/4*VREF threshold
 		{
-			ICSpeedVal1 = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2);
-			ICSpeedIsFirstCapt = 1;
-		}
-		else
-		{
-			ICSpeedVal2 = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2);
-			if ( counter !=0)
+			if (!ICSpeedIsFirstCapt)
 			{
-				if (ICSpeedVal1 < ICSpeedVal2) // Overflowed ?
+				ICSpeedVal1 = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2);
+				ICSpeedIsFirstCapt = 1;
+			}
+			else
+			{
+				ICSpeedVal2 = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_2);
+				if ( counter !=0)
 				{
-					ICSpeedDiff += ICSpeedVal2-ICSpeedVal1;
+					if (ICSpeedVal1 < ICSpeedVal2) // Overflowed ?
+					{
+						ICSpeedDiff += ICSpeedVal2-ICSpeedVal1;
+					}
+					else
+					{
+						ICSpeedDiff += ((htim->Instance->ARR-ICSpeedVal1)+ICSpeedVal2)+1;
+					}
 				}
-				else
+				ICSpeedVal1 = ICSpeedVal2;
+				counter++;
+				if (counter>=50)
 				{
-					ICSpeedDiff += ((32000000-ICSpeedVal1)+ICSpeedVal2)+1;
+					ICSpeedDiff /= counter-1;
+					counter = 0;
+					ICSpeedDiff = 0;
 				}
 			}
-			ICSpeedVal1 = ICSpeedVal2;
-			counter++;
-			if (counter>=50)
-			{
-				ICSpeedDiff /= counter-1;
-				counter = 0;
-				ICSpeedDiff = 0;
-			}
 		}
-
 	}
+	else if (htim == &htim15)
+	{
+		if (htim->Channel == HAL_TIM_ACTIVE_CHANNEL_1)	//Input capture from PAS on channel 1
+		{
+			__HAL_TIM_SET_COUNTER(&htim15, 0); //Reset timeout counter
+			PASSpeedDiff = HAL_TIM_ReadCapturedValue(htim, TIM_CHANNEL_1);
+
+			if (PASSpeedDiff < (PAS_ACTIVE_THRESHOLD + PAS_Detected * 100))
+			{
+				if (PASGotCapture == 1) PAS_Detected = 1;
+			}
+			else
+			{
+				PAS_Detected = 0;
+			}
+			PASGotCapture = 1;
+
+		}
+	}
+
   }
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
@@ -782,6 +833,7 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 					ThrottleStartup = 0;
 					//Add step to store new calibrated values to EEPROM
 				}
+				else ThrottleStartup = 0;
 			}
 			else
 			{
@@ -824,12 +876,17 @@ void toogle_ADC_Channel(ADC_ChannelConfTypeDef* ADCChannel)
 	}
 }
 
-uint8_t refreshPPM(uint16_t value)
+uint8_t refreshPPM(uint16_t ThrottleValue)
 {
-
-	if (OutputActive ==1 )
+	if (OutputActive == 1 )
 	{
-		htim1.Instance->CCR1 = (uint16_t)NormalizeChannel(value, MinAnalogThrottleValue, MaxAnalogThrottleValue, MIN_CHANNEL_VALUE, MAX_CHANNEL_VALUE);
+		if (ThrottleValue < THROTTLE_THRESHOLD && PAS_Detected != 0 && AssistLevel<=4 && AssistLevel >0)
+		{
+			htim1.Instance->CCR1 = (uint16_t)NormalizeChannel(1000 * AssistLevel, 0, 4000, MIN_CHANNEL_VALUE, MAX_CHANNEL_VALUE);
+			return 2;
+		}
+
+		htim1.Instance->CCR1 = (uint16_t)NormalizeChannel(ThrottleValue, MinAnalogThrottleValue, MaxAnalogThrottleValue, MIN_CHANNEL_VALUE, MAX_CHANNEL_VALUE);
 		return 1;
 	}
 	else htim1.Instance->CCR1 = 500;

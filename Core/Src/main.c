@@ -163,23 +163,27 @@ int main(void)
   MX_TIM15_Init();
   /* USER CODE BEGIN 2 */
 
-  init_ADC_Channel(&ADC2ChannelConfig);
-
+  // Wheel speed detection
   HAL_COMP_Start(&hcomp1);
   HAL_TIM_Base_Start(&htim2);
   HAL_TIM_IC_Start_IT(&htim2, TIM_CHANNEL_2);
 
+  //Pedal Sensing input capture and timeout start
   HAL_TIM_Base_Start_IT(&htim15);
   HAL_TIM_IC_Start_IT(&htim15, TIM_CHANNEL_1);
 
+  //output PPM start. No valid signal until throttle detected.(PWM with 5ms period. Valid tHigh 500 / 2500µs)
   htim1.Instance->CCR1 = 0;
   HAL_TIM_Base_Start(&htim1);
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 
+  // Throttle and Temperature measurement init (Select correct first channel)
+  init_ADC_Channel(&ADC2ChannelConfig);
   HAL_ADC_Start_IT(&hadc2);
   HAL_DAC_Start(&hdac1, DAC_CHANNEL_2);
   HAL_TIM_Base_Start(&htim4);
 
+  // Start task management timer (10ms period, to refresh output value)
   HAL_TIM_Base_Start_IT(&htim6);
 
   /* USER CODE END 2 */
@@ -630,7 +634,7 @@ static void MX_TIM6_Init(void)
 
   /* USER CODE END TIM6_Init 1 */
   htim6.Instance = TIM6;
-  htim6.Init.Prescaler = 16;
+  htim6.Init.Prescaler = 159;
   htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
   htim6.Init.Period = 1000;
   htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
@@ -671,7 +675,7 @@ static void MX_TIM15_Init(void)
   htim15.Instance = TIM15;
   htim15.Init.Prescaler = 159;
   htim15.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim15.Init.Period = 30000;
+  htim15.Init.Period = 41000;
   htim15.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
   htim15.Init.RepetitionCounter = 0;
   htim15.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;

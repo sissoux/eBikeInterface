@@ -37,6 +37,7 @@
 #define MIN_TEMP_ANALOG_THERSHOLD 200
 #define PAS_ACTIVE_THRESHOLD 20000
 #define THROTTLE_THRESHOLD 100
+#define TEMP_COUNTER_MAX 200	//Update TEMP out every 200*10ms
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -72,7 +73,8 @@ uint32_t PASSpeedDiff = 0;
 uint8_t PASGotCapture = 1;
 
 
-uint16_t lowest = 65535;
+uint16_t TempCounter = 0;
+uint32_t TempAccumulator = 0;
 
 
 ADC_ChannelConfTypeDef ADC2ChannelConfig = {0};
@@ -811,7 +813,15 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 			uint32_t reg = hcomp1.Instance->CSR;	//Does not work in one line....
 			if (( reg & 0x40000000) != 0)
 			{
-				HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, value);
+				TempAccumulator += value;
+				if (TempCounter >= TEMP_COUNTER_MAX)
+				{
+					TempAccumulator /= TempCounter;
+					TempCounter = 0;
+					HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, TempAccumulator);
+					TempAccumulator = 0;
+				}
+				TempCounter++;
 			}
 			break;
 

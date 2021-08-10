@@ -72,6 +72,9 @@ uint32_t PASSpeedDiff = 0;
 uint8_t PASGotCapture = 1;
 
 
+uint16_t lowest = 65535;
+
+
 ADC_ChannelConfTypeDef ADC2ChannelConfig = {0};
 uint16_t MinAnalogThrottleValue = 0;
 uint16_t MaxAnalogThrottleValue = 4096;
@@ -326,7 +329,7 @@ static void MX_COMP1_Init(void)
   hcomp1.Init.OutputPol = COMP_OUTPUTPOL_NONINVERTED;
   hcomp1.Init.Hysteresis = COMP_HYSTERESIS_50MV;
   hcomp1.Init.BlankingSrce = COMP_BLANKINGSRC_NONE;
-  hcomp1.Init.TriggerMode = COMP_TRIGGERMODE_NONE;
+  hcomp1.Init.TriggerMode = COMP_TRIGGERMODE_EVENT_RISING;
   if (HAL_COMP_Init(&hcomp1) != HAL_OK)
   {
     Error_Handler();
@@ -804,8 +807,9 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
 		uint16_t value = HAL_ADC_GetValue(hadc);
 		switch(ADC2ChannelConfig.Channel)
 		{
-		case ADC_CHANNEL_1:	//Channel 1 is mixed temperature/speed reading. Concentrate on the high level and ignore signal when it is low. We can concentrate on
-			if (value>=MIN_TEMP_ANALOG_THERSHOLD)
+		case ADC_CHANNEL_1:;	//Channel 1 is mixed temperature/speed reading. Concentrate on the high level and ignore signal when it is low. We can concentrate on
+			uint32_t reg = hcomp1.Instance->CSR;	//Does not work in one line....
+			if (( reg & 0x40000000) != 0)
 			{
 				HAL_DAC_SetValue(&hdac1, DAC_CHANNEL_2, DAC_ALIGN_12B_R, value);
 			}
